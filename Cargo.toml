@@ -1,0 +1,19 @@
+[package]
+name = "blog"
+version = "0.1.0"
+authors = ["Nick Massey <nickmass@nickmass.com>"]
+
+[dependencies]
+regex = "0.1"
+log = "0.3"
+env_logger = "0.3"
+redis = "0.6" 
+hyper = "0.9"
+ws = "0.5"
+dotenv = "0.8"
+serde = "0.8"
+serde_json = "0.8"
+serde_macros = "0.8"
+url = "1.2"
+r2d2 = "0.7"
+r2d2_redis = "0.4"
