@@ -130,6 +130,12 @@ pub struct RouteParams {
     params: HashMap<String, String>,
 }
 
+impl RouteParams {
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.params.get(name).map(|x| &**x)
+    }
+}
+
 pub trait RouteMatcher: Send + Sync {
     fn get_match(&self, url: &str) -> Option<RouteParams>;
 }

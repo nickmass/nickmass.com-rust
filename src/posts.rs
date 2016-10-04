@@ -5,6 +5,7 @@ use redis::Commands;
 
 use std::collections::HashMap;
 
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Post {
     pub id: Option<u32>,
     pub title: String,

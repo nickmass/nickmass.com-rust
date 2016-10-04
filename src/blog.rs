@@ -1,3 +1,6 @@
+extern crate url;
+extern crate serde_json;
+
 use std::collections::HashMap;
 
 use posts::{Post, PostService};
@@ -5,8 +8,10 @@ use web_server::{ContextFactory, HttpHandler, Router, RouteParams};
 
 use hyper::server::response::Response;
 use hyper::server::request::Request;
+use hyper::uri::RequestUri;
 
 use regex::Regex;
+use self::url::Url;
 
 use r2d2;
 use r2d2_redis::RedisConnectionManager;
@@ -50,10 +55,10 @@ pub enum Route {
 impl Route {
     pub fn router() -> Router<Route> {
         let mut router = Router::new();
-        router.get(Regex::new("^/api/posts/(?P<id>[:digit:]{1,10})/?$").unwrap(),
-                                     Route::GetPost);
-        router.get(Regex::new("^/api/posts/(?P<fragment>.+)/?$").unwrap(), Route::GetPostByFragment);
-        router.get(Regex::new("^/api/posts/?$").unwrap(), Route::GetPosts);
+        router.get(Regex::new("^/api/posts/(?P<id>[:digit:]{1,10})/?$").unwrap(), Route::GetPost);
+        router.get(Regex::new("^/api/posts/(?P<fragment>.+)/?$").unwrap(),
+                   Route::GetPostByFragment);
+        router.get(Regex::new("^/api/posts").unwrap(), Route::GetPosts);
         router.post(Regex::new("^/api/posts/?$").unwrap(), Route::CreatePost);
         router.put(Regex::new("^/api/posts/?$").unwrap(), Route::UpdatePost);
         router.delete(Regex::new("^/api/posts/(?P<id>[:digit:]+)/?$").unwrap(), Route::DeletePost);
@@ -67,18 +72,47 @@ impl HttpHandler for Route {
     fn exec(&self, ctx: Self::Context, req: Request, res: Response, params: RouteParams) {
         info!("Matched Route {:?}", self);
         let posts = PostService::new(ctx.redis.get().unwrap());
+
+        let url = match req.uri {
+            RequestUri::AbsolutePath(s) => Some(s),
+            _ => None
+        };
+
+        let parser = Url::parse("http://localhost").unwrap();
+        let url = url.and_then(|x| parser.join(&*x).ok());
+        let url = url.expect("Valid Url");
+
         match *self {
             Route::GetPosts => {
-                posts.list(10, 0);
+                let limit = url.query_pairs()
+                    .find(|x| x.0 == "limit")
+                    .and_then(|x| x.1.parse().ok())
+                    .unwrap_or(10);
+                let skip = url.query_pairs()
+                    .find(|x| x.0 == "skip")
+                    .and_then(|x| x.1.parse().ok())
+                    .unwrap_or(0);
+
+                let posts = posts.list(limit, skip);
+
+                let json = serde_json::to_string(&posts).unwrap();
+                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
             },
             Route::GetPost => {
-                posts.get(1);
+                let post = posts.get(params.get("id").unwrap().parse().unwrap());
+
+                let json = serde_json::to_string(&post).unwrap();
+                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
             },
             Route::GetPostByFragment => {
-                posts.get_by_fragment("asd");
+                let post = posts.get_by_fragment(params.get("fragment").unwrap());
+
+                let json = serde_json::to_string(&post).unwrap();
+                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
             }
-            _ => {}
+            _ => {
+                res.send(b"Hello World").ok();
+            },
         }
-        res.send(b"Hello World").ok();
     }
 }
