@@ -54,8 +54,8 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
             let route = router.route(&req);
 
             match route {
-                Some(r) => {
-                    r.exec(fact.get(), req, res);
+                Some((r, params)) => {
+                    r.exec(fact.get(), req, res, params);
                 },
                 _ => {
                     *res.status_mut() = StatusCode::NotFound;
@@ -68,7 +68,8 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
 
 pub trait HttpHandler {
     type Context;
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response);
+    fn exec(&self, ctx: Self::Context, req: Request, res: Response,
+            route_params: HashMap<String, String>);
 }
 
 struct RouteRegex<T> {
@@ -148,15 +149,18 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
         }));
     }
 
-    fn route(&self, req: &Request) -> Option<&T> {
+    fn route(&self, req: &Request) -> Option<(&T, HashMap<String, String>)> {
         let route = {
             if let RequestUri::AbsolutePath(ref url) = req.uri {
-                self.routes.iter().find(|x| x.get_match(&*url, &req.method).is_some())
+                self.routes.iter()
+                    .map(|x| x.get_match(&*url, &req.method).map(|y|(x.route(),y)))
+                    .find(|x| x.is_some())
+                    .map(|x| x.unwrap())
             } else {
                 None
             }
         };
 
-        route.as_ref().map(|x|x.route())
+        route
     }
 }

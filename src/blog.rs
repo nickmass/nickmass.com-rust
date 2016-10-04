@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use posts::{Post, PostService};
 use web_server::{ContextFactory, HttpHandler, Router};
+
 use hyper::server::response::Response;
 use hyper::server::request::Request;
 use hyper::method::Method;
@@ -59,7 +62,8 @@ impl Route {
 impl HttpHandler for Route {
     type Context = BlogContext;
 
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response) {
+    fn exec(&self, ctx: Self::Context, req: Request, res: Response,
+            route_params: HashMap<String, String>) {
         info!("Matched Route {:?}", self);
         let posts = PostService::new(ctx.redis.get().unwrap());
         match *self {
@@ -67,8 +71,11 @@ impl HttpHandler for Route {
                 posts.list(10, 0);
             },
             Route::GetPost => {
-                posts.get(1);
+                posts.get(route_params["id"].parse().unwrap());
             },
+            Route::GetPostByFragment => {
+                posts.get_by_fragment(&*route_params["fragment"]);
+            }
             _ => {}
         }
         res.send(b"Hello World").ok();
