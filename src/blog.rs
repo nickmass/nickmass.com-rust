@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use posts::{Post, PostService};
-use web_server::{ContextFactory, HttpHandler, Router};
+use web_server::{ContextFactory, HttpHandler, Router, RouteParams};
 
 use hyper::server::response::Response;
 use hyper::server::request::Request;
-use hyper::method::Method;
+
+use regex::Regex;
 
 use r2d2;
 use r2d2_redis::RedisConnectionManager;
@@ -49,12 +50,13 @@ pub enum Route {
 impl Route {
     pub fn router() -> Router<Route> {
         let mut router = Router::new();
-        router.add_regex(Method::Get, "^/api/posts/(?P<id>[:digit:]{1,10})/?$", Route::GetPost);
-        router.add_regex(Method::Get, "^/api/posts/(?P<fragment>.+)/?$", Route::GetPostByFragment);
-        router.add_regex(Method::Get, "^/api/posts/?$", Route::GetPosts);
-        router.add_regex(Method::Post, "^/api/posts/?$", Route::CreatePost);
-        router.add_regex(Method::Put, "^/api/posts/?$", Route::UpdatePost);
-        router.add_regex(Method::Delete, "^/api/posts/(?P<id>[:digit:]+)/?$", Route::DeletePost);
+        router.get(Regex::new("^/api/posts/(?P<id>[:digit:]{1,10})/?$").unwrap(),
+                                     Route::GetPost);
+        router.get(Regex::new("^/api/posts/(?P<fragment>.+)/?$").unwrap(), Route::GetPostByFragment);
+        router.get(Regex::new("^/api/posts/?$").unwrap(), Route::GetPosts);
+        router.post(Regex::new("^/api/posts/?$").unwrap(), Route::CreatePost);
+        router.put(Regex::new("^/api/posts/?$").unwrap(), Route::UpdatePost);
+        router.delete(Regex::new("^/api/posts/(?P<id>[:digit:]+)/?$").unwrap(), Route::DeletePost);
         router
     }
 }
@@ -62,8 +64,7 @@ impl Route {
 impl HttpHandler for Route {
     type Context = BlogContext;
 
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response,
-            route_params: HashMap<String, String>) {
+    fn exec(&self, ctx: Self::Context, req: Request, res: Response, params: RouteParams) {
         info!("Matched Route {:?}", self);
         let posts = PostService::new(ctx.redis.get().unwrap());
         match *self {
@@ -71,10 +72,10 @@ impl HttpHandler for Route {
                 posts.list(10, 0);
             },
             Route::GetPost => {
-                posts.get(route_params["id"].parse().unwrap());
+                posts.get(1);
             },
             Route::GetPostByFragment => {
-                posts.get_by_fragment(&*route_params["fragment"]);
+                posts.get_by_fragment("asd");
             }
             _ => {}
         }

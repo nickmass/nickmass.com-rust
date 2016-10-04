@@ -9,6 +9,7 @@ extern crate redis;
 extern crate r2d2;
 extern crate r2d2_redis;
 extern crate hyper;
+extern crate regex;
 
 use dotenv::dotenv;
 use r2d2_redis::RedisConnectionManager;

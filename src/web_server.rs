@@ -1,4 +1,3 @@
-extern crate regex;
 
 use hyper::server::Server;
 use hyper::net::{Fresh, HttpListener};
@@ -8,7 +7,7 @@ use hyper::uri::RequestUri;
 use hyper::status::StatusCode;
 use hyper::method::Method;
 
-use self::regex::Regex;
+use regex::Regex;
 
 use error;
 
@@ -68,61 +67,11 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
 
 pub trait HttpHandler {
     type Context;
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response,
-            route_params: HashMap<String, String>);
-}
-
-struct RouteRegex<T> {
-    method: Method,
-    regex: Regex,
-    route: T,
-}
-
-impl<T> RouteMatch<T> for RouteRegex<T> where T: Send + Sync {
-    fn route(&self) -> &T {
-        &self.route
-    }
-
-    fn get_match(&self, url: &str, method: &Method) -> Option<HashMap<String, String>> {
-        if &self.method != method  { return None; }
-        self.regex.captures(url)
-            .map(|r| r.iter_named()
-                 .filter(|x| x.1.is_some())
-                 .fold(HashMap::new(), |mut map, cap| {
-                     map.insert(cap.0.to_owned(), cap.1.unwrap().to_owned());
-                     map
-        }))
-    }
-}
-
-struct RouteItem<T> {
-    method: Method,
-    path: String,
-    route: T,
-}
-
-impl<T> RouteMatch<T> for RouteItem<T> where T: Send + Sync {
-    fn route(&self) -> &T {
-        &self.route
-    }
-
-    fn get_match(&self, url: &str, method: &Method) -> Option<HashMap<String, String>> {
-        if &self.method == method && url.starts_with(&*self.path) {
-            Some(HashMap::new())
-        } else {
-            None
-        }
-    }
-}
-
-trait RouteMatch<T> : Send + Sync {
-    fn route(&self) -> &T;
-
-    fn get_match(&self, url: &str, method: &Method) -> Option<HashMap<String, String>>;
+    fn exec(&self, ctx: Self::Context, req: Request, res: Response, params: RouteParams);
 }
 
 pub struct Router<T> {
-    routes: Vec<Box<RouteMatch<T>>>,
+    routes: Vec<RouteMatch<T>>,
 }
 
 impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
@@ -132,28 +81,40 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
         }
     }
 
-    pub fn add_regex(&mut self, method: Method, regex: &str, route: T) {
-        self.routes.push(Box::new(RouteRegex {
-            method: method,
-            regex: Regex::new(regex).unwrap(),
-            route: route,
-        }));
+    pub fn get<M>(&mut self, matcher: M, route: T)
+        where M: 'static + IntoRouteMatcher {
+        self.add(Method::Get, matcher, route)
     }
 
-    pub fn add<S>(&mut self, method: Method, path: S, route: T) where
-        S: ToOwned<Owned=String>, String: ::std::borrow::Borrow<S> {
-        self.routes.push(Box::new(RouteItem {
-            method: method,
-            path: path.to_owned(),
-            route: route,
-        }));
+    pub fn post<M>(&mut self, matcher: M, route: T)
+        where M: 'static + IntoRouteMatcher {
+        self.add(Method::Post, matcher, route)
     }
 
-    fn route(&self, req: &Request) -> Option<(&T, HashMap<String, String>)> {
+    pub fn put<M>(&mut self, matcher: M, route: T)
+        where M: 'static + IntoRouteMatcher {
+        self.add(Method::Put, matcher, route)
+    }
+
+    pub fn delete<M>(&mut self, matcher: M, route: T)
+        where M: 'static + IntoRouteMatcher {
+        self.add(Method::Delete, matcher, route)
+    }
+
+    pub fn add<M>(&mut self, method: Method, matcher: M, route: T)
+        where M: 'static + IntoRouteMatcher {
+        self.routes.push(RouteMatch {
+            matcher: Box::new(matcher.into_matcher()),
+            route: route,
+            method: method,
+        });
+    }
+
+    fn route(&self, req: &Request) -> Option<(&T, RouteParams)> {
         let route = {
             if let RequestUri::AbsolutePath(ref url) = req.uri {
                 self.routes.iter()
-                    .map(|x| x.get_match(&*url, &req.method).map(|y|(x.route(),y)))
+                    .map(|x| x.get_match(&req.method, &*url).map(|y|(&x.route,y)))
                     .find(|x| x.is_some())
                     .map(|x| x.unwrap())
             } else {
@@ -162,5 +123,86 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
         };
 
         route
+    }
+}
+
+pub struct RouteParams {
+    params: HashMap<String, String>,
+}
+
+pub trait RouteMatcher: Send + Sync {
+    fn get_match(&self, url: &str) -> Option<RouteParams>;
+}
+
+pub struct RegexMatcher {
+    regex: Regex,
+}
+
+impl RouteMatcher for RegexMatcher {
+    fn get_match(&self, url: &str) -> Option<RouteParams> {
+        self.regex.captures(url)
+            .map(|r| r.iter_named()
+                 .filter(|x| x.1.is_some())
+                 .fold(HashMap::new(), |mut map, cap| {
+                     map.insert(cap.0.to_owned(), cap.1.unwrap().to_owned());
+                     map
+                 }))
+            .map(|x| RouteParams{ params: x})
+    }
+}
+
+pub struct DefaultMatcher {
+    pattern: String
+}
+
+impl RouteMatcher for DefaultMatcher {
+    fn get_match(&self, url: &str) -> Option<RouteParams> {
+        if url.starts_with(&*self.pattern) {
+            Some(RouteParams{ params: HashMap::new() })
+        } else {
+            None
+        }
+    }
+}
+
+struct RouteMatch<T> {
+    matcher: Box<RouteMatcher>,
+    route: T,
+    method: Method,
+}
+
+impl<T> RouteMatch<T> {
+    fn get_match(&self, method: &Method, url: &str) -> Option<RouteParams> {
+        if method != &self.method { return None; }
+        self.matcher.get_match(url)
+    }
+}
+
+pub trait IntoRouteMatcher {
+    type Matcher: RouteMatcher;
+    fn into_matcher(self) -> Self::Matcher;
+}
+
+impl IntoRouteMatcher for Regex {
+    type Matcher = RegexMatcher;
+
+    fn into_matcher(self) -> RegexMatcher {
+        RegexMatcher { regex: self }
+    }
+}
+
+impl<'a> IntoRouteMatcher for &'a str {
+    type Matcher =  DefaultMatcher;
+
+    fn into_matcher(self) -> DefaultMatcher {
+        DefaultMatcher { pattern: self.to_owned() }
+    }
+}
+
+impl IntoRouteMatcher for String {
+    type Matcher = DefaultMatcher;
+
+    fn into_matcher(self) -> DefaultMatcher {
+        DefaultMatcher { pattern: self }
     }
 }
