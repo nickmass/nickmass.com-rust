@@ -8,6 +8,7 @@ extern crate dotenv;
 extern crate redis;
 extern crate r2d2;
 extern crate r2d2_redis;
+extern crate hyper;
 
 use dotenv::dotenv;
 use r2d2_redis::RedisConnectionManager;
@@ -18,10 +19,11 @@ use std::env::var;
 mod error;
 mod web_server;
 mod ws_server;
-
 mod posts;
+mod blog;
 
-use web_server::{WebServer, BlogContextFactory, Route};
+use blog::{BlogContextFactory, Route};
+use web_server::WebServer;
 use ws_server::WsServer;
 
 fn main() {
