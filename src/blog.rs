@@ -1,5 +1,5 @@
 use posts::{Post, PostService};
-use web_server::{HttpHandler, Router, RouteParams, Request, Response};
+use web_server::{RouteHandler, Router, RouteParams, Request, Response};
 
 use regex::Regex;
 
@@ -36,7 +36,7 @@ impl Route {
         router.get(Regex::new("^/api/posts/(?P<id>[:digit:]{1,10})/?$").unwrap(), Route::GetPost);
         router.get(Regex::new("^/api/posts/(?P<fragment>.+)/?$").unwrap(),
                    Route::GetPostByFragment);
-        router.get(Regex::new("^/api/posts").unwrap(), Route::GetPosts);
+        router.get(Regex::new("^/api/posts/?$").unwrap(), Route::GetPosts);
         router.post(Regex::new("^/api/posts/?$").unwrap(), Route::CreatePost);
         router.put(Regex::new("^/api/posts/?$").unwrap(), Route::UpdatePost);
         router.delete(Regex::new("^/api/posts/(?P<id>[:digit:]+)/?$").unwrap(), Route::DeletePost);
@@ -44,10 +44,11 @@ impl Route {
     }
 }
 
-impl HttpHandler for Route {
+impl RouteHandler for Route {
     type Context = BlogContext;
 
-    fn exec(&self, ctx: BlogContext, mut req: Request, res: Response, params: RouteParams) {
+    fn route<'a, 'b: 'a, 'c>(&self, ctx: BlogContext, req: Request<'a, 'b>, res: Response<'c>, params: RouteParams)
+             -> (Request<'a, 'b>, Response<'c>) {
         info!("Matched Route {:?}", self);
 
         match *self {
@@ -61,30 +62,35 @@ impl HttpHandler for Route {
 
                 let posts = ctx.posts.list(limit, skip);
 
-                res.json(&posts);
+                (req, res.json(&posts))
             },
             Route::GetPost => {
                 let post = ctx.posts.get(params.get("id").unwrap().parse().unwrap());
 
-                res.json(&post);
+                (req, res.json(&post))
             },
             Route::GetPostByFragment => {
                 let post = ctx.posts.get_by_fragment(params.get("fragment").unwrap());
 
-                res.json(&post);
+                (req, res.json(&post))
             },
             Route::DeletePost => {
                 ctx.posts.delete(params.get("id").unwrap().parse().unwrap());
+                (req, res)
             },
             Route::UpdatePost => {
-                let post = req.as_json().unwrap();
+                let mut req = req.body();
+                let post = req.to_json().unwrap();
 
                 ctx.posts.update(post);
+                (req, res)
             },
             Route::CreatePost => {
-                let post = req.as_json().unwrap();
+                let mut req = req.body();
+                let post = req.to_json().unwrap();
 
                 let post = ctx.posts.create(post);
+                (req, res)
             },
         }
     }

@@ -20,6 +20,7 @@ use error;
 use std::net::ToSocketAddrs;
 use std::fmt::Debug;
 use std::collections::HashMap;
+use std::io::Read;
 
 pub trait ContextFactory {
     type Context;
@@ -42,7 +43,7 @@ pub struct WebServer<TFactory, TRoute> {
 
 impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
     TFactory: 'static + ContextFactory<Context=TRoute::Context> + Sync + Send,
-    TRoute: 'static + HttpHandler + Sync + Send,
+    TRoute: 'static + RouteHandler + Sync + Send,
 {
 
     pub fn new<To: ToSocketAddrs + Debug>(addr: To, router: Router<TRoute>, factory: TFactory)
@@ -64,67 +65,150 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
 
         self.server.handle(move |req: HyperRequest, mut res: HyperResponse<Fresh>| {
             info!("Incoming request to: {}", req.uri);
+            let (req, res) = (req.to_request(), res.to_response());
+            if req.is_none() {
+                res.text("Bad Request");
+                return;
+            }
+            let mut req = req.unwrap();
+
             let route = router.route(&req);
 
             match route {
                 Some((r, params)) => {
-                    r.exec(fact.get(), Request(req), Response(res), params);
+                    r.route(fact.get(), req, res, params);
                 },
                 _ => {
-                    *res.status_mut() = StatusCode::NotFound;
-                    res.send(b"Bad Request").ok();
+                    res.text("Bad Request");
                 },
             };
         }).ok();;
     }
 }
 
-pub struct Request<'a, 'b: 'a>(HyperRequest<'a, 'b>);
-impl<'a, 'b: 'a> Request<'a, 'b> {
-    pub fn url(&self) -> Option<url::Url> {
-        let url = match self.0.uri {
+trait ToRequest<'a, 'b: 'a> {
+    fn to_request(self) -> Option<Request<'a, 'b>>;
+}
+
+impl<'a, 'b: 'a> ToRequest<'a, 'b> for HyperRequest<'a, 'b> {
+    fn to_request(self) -> Option<Request<'a, 'b>> {
+        self.url().map(|u| Request::Headers(u, self))
+    }
+}
+
+trait GetUrl {
+    fn url(&self) -> Option<url::Url>;
+}
+
+impl<'a, 'b: 'a> GetUrl for HyperRequest<'a, 'b> {
+    fn url(&self) -> Option<url::Url> { 
+        let url = match self.uri {
             RequestUri::AbsolutePath(ref s) => s,
-            _ => unimplemented!()
+            _ => unimplemented!(),
         };
 
         let parser = url::Url::parse("http://localhost").unwrap();
         parser.join(&*url).ok()
     }
+}
+
+pub enum Request<'a, 'b: 'a> {
+    Headers(url::Url, HyperRequest<'a, 'b>),
+    Body(url::Url, HyperRequest<'a, 'b>, Vec<u8>),
+}
+impl<'a, 'b: 'a> Request<'a, 'b> {
+    pub fn url(&self) -> &url::Url {
+        match *self {
+            Request::Headers(ref u, _) | Request::Body(ref u, _, _) => u,
+        }
+    }
+
+    pub fn method(&self) -> &Method {
+        match *self {
+            Request::Headers(_, ref r) | Request::Body(_, ref r, _) => &r.method,
+        }
+    }
 
     pub fn query_param(&self, key: &str) -> Option<String> {
         self.url()
-            .and_then(|x| x.query_pairs()
-                      .find(|x| x.0 == key)
-                      .map(|x| x.1.into_owned())
-            )
+            .query_pairs()
+            .find(|x| x.0 == key)
+            .map(|x| x.1.into_owned())
     }
 
-    pub fn as_json<T>(&mut self) -> Result<T, serde_json::error::Error> where T: Deserialize {
-        serde_json::from_reader(&mut self.0)
+    pub fn body(self) -> Request<'a, 'b> {
+        match self {
+            Request::Headers(u, mut r) => {
+                let mut buf = Vec::new();
+                r.read_to_end(&mut buf);
+                Request::Body(u, r, buf)
+            },
+            Request::Body(_, _, _) => {
+                self
+            },
+        }
+    }
+
+    pub fn to_json<T>(&mut self) -> Result<T, serde_json::error::Error> where T: Deserialize {
+        match *self {
+            Request::Headers(_, _) => {
+                panic!("Attempted to read body on fresh request")
+            },
+            Request::Body(_, _, ref b) => {
+                serde_json::from_slice(b)
+            },
+        }
     }
 }
 
-pub struct Response<'a>(HyperResponse<'a>);
+trait ToResponse<'a> {
+    fn to_response(self) -> Response<'a>;
+}
+impl<'a> ToResponse<'a> for HyperResponse<'a> {
+    fn to_response(self) -> Response<'a> {
+        Response::Fresh(self)
+    }
+}
+
+pub enum Response<'a> {
+    Fresh(HyperResponse<'a>),
+    Headers(HyperResponse<'a>),
+    Done
+}
+
 impl<'a> Response<'a> {
-    pub fn json<T>(self, data: &T) where T: Serialize {
-        self.0.send(&*serde_json::to_vec(data).unwrap()).ok();
+    pub fn json<T>(self, data: &T) -> Response<'a> where T: Serialize  {
+        let result = match self {
+            Response::Fresh(r) | Response::Headers(r) => {
+                r.send(&*serde_json::to_vec(data).unwrap()).ok()
+            },
+            Response::Done => None,
+        };
+        Response::Done
     }
 
-    pub fn text<T>(self, data: T) where T: AsRef<str> {
-        self.0.send(&*data.as_ref().bytes().collect::<Vec<u8>>()).ok();
+    pub fn text<T>(self, data: T) -> Response<'a> where T: AsRef<str> {
+        let result = match self {
+            Response::Fresh(r) | Response::Headers(r) => {
+                r.send(&*data.as_ref().bytes().collect::<Vec<u8>>()).ok()
+            },
+            Response::Done => None,
+        };
+        Response::Done
     }
 }
 
-pub trait HttpHandler {
+pub trait RouteHandler {
     type Context;
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response, params: RouteParams);
+    fn route<'a, 'b: 'a, 'c>(&self, ctx: Self::Context, req: Request<'a, 'b>, res: Response<'c>,
+                         params: RouteParams) -> (Request<'a, 'b>, Response<'c>);
 }
 
 pub struct Router<T> {
     routes: Vec<RouteMatch<T>>,
 }
 
-impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
+impl<T> Router<T> where T: 'static + Send + Sync + RouteHandler {
     pub fn new() -> Router<T> {
         Router {
             routes: Vec::new(),
@@ -160,15 +244,11 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
         });
     }
 
-    fn route(&self, req: &HyperRequest) -> Option<(&T, RouteParams)> {
-        if let RequestUri::AbsolutePath(ref url) = req.uri {
-            self.routes.iter()
-                .map(|x| x.get_match(&req.method, &*url).map(|y|(&x.route,y)))
-                .find(|x| x.is_some())
-                .map(|x| x.unwrap())
-        } else {
-            None
-        }
+    fn route(&self, req: &Request) -> Option<(&T, RouteParams)> {
+        self.routes.iter()
+            .map(|x| x.get_match(&req.method(), req.url().path()).map(|y|(&x.route,y)))
+            .find(|x| x.is_some())
+            .map(|x| x.unwrap())
     }
 }
 
