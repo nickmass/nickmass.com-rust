@@ -1,6 +1,7 @@
-#![feature(plugin, custom_derive)]
-#![plugin(serde_macros)]
+#![feature(rustc_macro)]
 
+#[macro_use]
+extern crate serde_derive;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
@@ -8,7 +9,6 @@ extern crate dotenv;
 extern crate redis;
 extern crate r2d2;
 extern crate r2d2_redis;
-extern crate hyper;
 extern crate regex;
 
 use dotenv::dotenv;
@@ -23,7 +23,7 @@ mod ws_server;
 mod posts;
 mod blog;
 
-use blog::{BlogContextFactory, Route};
+use blog::{BlogContext, Route};
 use web_server::WebServer;
 use ws_server::WsServer;
 
@@ -38,8 +38,9 @@ fn main() {
     let web_pool = r2d2::Pool::new(pool_config, manager).unwrap();
     let ws_pool = web_pool.clone();
 
-    let fact = BlogContextFactory::new(web_pool);
-    let web = WebServer::new(&*var("WEB_SOCKET").unwrap(), fact, Route::router()); 
+    let web = WebServer::new(&*var("WEB_SOCKET").unwrap(), Route::router(), move ||{
+        BlogContext::new(web_pool.clone())
+    });
     let ws = WsServer::new(&*var("WS_SOCKET").unwrap());
 
     let web_t = thread::spawn(move || web.run());

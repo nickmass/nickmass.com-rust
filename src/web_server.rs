@@ -1,13 +1,18 @@
+extern crate url;
+extern crate serde;
+extern crate serde_json;
+extern crate hyper;
+extern crate regex;
 
-use hyper::server::Server;
-use hyper::net::{Fresh, HttpListener};
-use hyper::server::response::Response;
-use hyper::server::request::Request;
-use hyper::uri::RequestUri;
-use hyper::status::StatusCode;
-use hyper::method::Method;
+use self::hyper::net::{Fresh, HttpListener};
+use self::hyper::server::{Server, Request as HyperRequest, Response as HyperResponse};
+use self::hyper::uri::RequestUri;
+use self::hyper::status::StatusCode;
+use self::hyper::method::Method;
 
-use regex::Regex;
+use self::regex::Regex;
+
+use self::serde::Serialize;
 
 use error;
 
@@ -18,6 +23,14 @@ use std::collections::HashMap;
 pub trait ContextFactory {
     type Context;
     fn get(&self) -> Self::Context;
+}
+
+impl<T, C> ContextFactory for T where T: Fn() -> C {
+    type Context = C;
+
+    fn get(&self) -> C {
+        self()
+    }
 }
 
 pub struct WebServer<TFactory, TRoute> {
@@ -31,7 +44,7 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
     TRoute: 'static + HttpHandler + Sync + Send,
 {
 
-    pub fn new<To: ToSocketAddrs + Debug>(addr: To, factory: TFactory, router: Router<TRoute>)
+    pub fn new<To: ToSocketAddrs + Debug>(addr: To, router: Router<TRoute>, factory: TFactory)
                                           -> WebServer<TFactory, TRoute> {
 
         let server = Server::http(addr).map_err(error::log).unwrap();
@@ -48,13 +61,13 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
         let fact = self.factory;
         let router = self.router;
 
-        self.server.handle(move |req: Request, mut res: Response<Fresh>| {
+        self.server.handle(move |req: HyperRequest, mut res: HyperResponse<Fresh>| {
             info!("Incoming request to: {}", req.uri);
             let route = router.route(&req);
 
             match route {
                 Some((r, params)) => {
-                    r.exec(fact.get(), req, res, params);
+                    r.exec(fact.get(), Request(req), Response(res), params);
                 },
                 _ => {
                     *res.status_mut() = StatusCode::NotFound;
@@ -62,6 +75,40 @@ impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
                 },
             };
         }).ok();;
+    }
+}
+
+pub struct Request<'a, 'b: 'a>(HyperRequest<'a, 'b>);
+impl<'a, 'b: 'a> Request<'a, 'b> {
+    pub fn url(&self) -> Option<url::Url> {
+        let url = match self.0.uri {
+            RequestUri::AbsolutePath(ref s) => s,
+            _ => unimplemented!()
+        };
+
+        let parser = url::Url::parse("http://localhost").unwrap();
+        let url = parser.join(&*url).ok();
+
+        url
+    }
+
+    pub fn query_param(&self, key: &str) -> Option<String> {
+        self.url()
+            .and_then(|x| x.query_pairs()
+                      .find(|x| x.0 == key)
+                      .map(|x| x.1.into_owned())
+            )
+    }
+}
+
+pub struct Response<'a>(HyperResponse<'a>);
+impl<'a> Response<'a> {
+    pub fn json<T>(self, data: &T) where T: Serialize {
+        self.0.send(&*serde_json::to_vec(data).unwrap()).ok();
+    }
+
+    pub fn text<T>(self, data: T) where T: AsRef<str> {
+        self.0.send(&*data.as_ref().bytes().collect::<Vec<u8>>()).ok();
     }
 }
 
@@ -110,7 +157,7 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
         });
     }
 
-    fn route(&self, req: &Request) -> Option<(&T, RouteParams)> {
+    fn route(&self, req: &HyperRequest) -> Option<(&T, RouteParams)> {
         let route = {
             if let RequestUri::AbsolutePath(ref url) = req.uri {
                 self.routes.iter()

@@ -1,45 +1,21 @@
-extern crate url;
-extern crate serde_json;
-
-use std::collections::HashMap;
-
 use posts::{Post, PostService};
-use web_server::{ContextFactory, HttpHandler, Router, RouteParams};
-
-use hyper::server::response::Response;
-use hyper::server::request::Request;
-use hyper::uri::RequestUri;
+use web_server::{HttpHandler, Router, RouteParams, Request, Response};
 
 use regex::Regex;
-use self::url::Url;
 
-use r2d2;
+use r2d2::Pool;
 use r2d2_redis::RedisConnectionManager;
 
 pub struct BlogContext {
     posts: PostService,
-    redis: r2d2::Pool<RedisConnectionManager>,
+    redis: Pool<RedisConnectionManager>,
 }
 
-pub struct BlogContextFactory {
-    redis: r2d2::Pool<RedisConnectionManager>,
-}
-
-impl BlogContextFactory {
-    pub fn new(redis: r2d2::Pool<RedisConnectionManager>) -> BlogContextFactory {
-        BlogContextFactory {
-            redis: redis,
-        }
-    }
-}
-
-impl ContextFactory for BlogContextFactory {
-    type Context = BlogContext;
-
-    fn get(&self) -> BlogContext {
+impl BlogContext {
+    pub fn new(redis: Pool<RedisConnectionManager>) -> BlogContext {
         BlogContext {
-            posts: PostService::new(self.redis.clone()),
-            redis: self.redis.clone()
+            posts: PostService::new(redis.clone()),
+            redis: redis
         }
     }
 }
@@ -74,45 +50,31 @@ impl HttpHandler for Route {
     fn exec(&self, ctx: BlogContext, req: Request, res: Response, params: RouteParams) {
         info!("Matched Route {:?}", self);
 
-        let url = match req.uri {
-            RequestUri::AbsolutePath(s) => Some(s),
-            _ => None
-        };
-
-        let parser = Url::parse("http://localhost").unwrap();
-        let url = url.and_then(|x| parser.join(&*x).ok());
-        let url = url.expect("Valid Url");
-
         match *self {
             Route::GetPosts => {
-                let limit = url.query_pairs()
-                    .find(|x| x.0 == "limit")
-                    .and_then(|x| x.1.parse().ok())
+                let limit = req.query_param("limit")
+                    .and_then(|x| x.parse().ok())
                     .unwrap_or(10);
-                let skip = url.query_pairs()
-                    .find(|x| x.0 == "skip")
-                    .and_then(|x| x.1.parse().ok())
+                let skip = req.query_param("skip")
+                    .and_then(|x| x.parse().ok())
                     .unwrap_or(0);
 
                 let posts = ctx.posts.list(limit, skip);
 
-                let json = serde_json::to_vec(&posts).unwrap();
-                res.send(&*json).ok();
+                res.json(&posts);
             },
             Route::GetPost => {
                 let post = ctx.posts.get(params.get("id").unwrap().parse().unwrap());
 
-                let json = serde_json::to_vec(&post).unwrap();
-                res.send(&*json).ok();
+                res.json(&post);
             },
             Route::GetPostByFragment => {
                 let post = ctx.posts.get_by_fragment(params.get("fragment").unwrap());
 
-                let json = serde_json::to_vec(&post).unwrap();
-                res.send(&*json).ok();
+                res.json(&post);
             }
             _ => {
-                res.send(b"Hello World").ok();
+                res.text("Hello World");
             },
         }
     }
