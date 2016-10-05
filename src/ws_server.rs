@@ -7,5 +7,7 @@ impl WsServer {
         WsServer
     }
 
-    pub fn run(self) { loop {} }
+    pub fn run(self) { loop {
+        ::std::thread::sleep(::std::time::Duration::from_millis(100));
+    } }
 }

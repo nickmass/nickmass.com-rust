@@ -88,9 +88,7 @@ impl<'a, 'b: 'a> Request<'a, 'b> {
         };
 
         let parser = url::Url::parse("http://localhost").unwrap();
-        let url = parser.join(&*url).ok();
-
-        url
+        parser.join(&*url).ok()
     }
 
     pub fn query_param(&self, key: &str) -> Option<String> {
@@ -163,18 +161,14 @@ impl<T> Router<T> where T: 'static + Send + Sync + HttpHandler {
     }
 
     fn route(&self, req: &HyperRequest) -> Option<(&T, RouteParams)> {
-        let route = {
-            if let RequestUri::AbsolutePath(ref url) = req.uri {
-                self.routes.iter()
-                    .map(|x| x.get_match(&req.method, &*url).map(|y|(&x.route,y)))
-                    .find(|x| x.is_some())
-                    .map(|x| x.unwrap())
-            } else {
-                None
-            }
-        };
-
-        route
+        if let RequestUri::AbsolutePath(ref url) = req.uri {
+            self.routes.iter()
+                .map(|x| x.get_match(&req.method, &*url).map(|y|(&x.route,y)))
+                .find(|x| x.is_some())
+                .map(|x| x.unwrap())
+        } else {
+            None
+        }
     }
 }
 
