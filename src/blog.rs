@@ -96,20 +96,20 @@ impl HttpHandler for Route {
 
                 let posts = ctx.posts.list(limit, skip);
 
-                let json = serde_json::to_string(&posts).unwrap();
-                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
+                let json = serde_json::to_vec(&posts).unwrap();
+                res.send(&*json).ok();
             },
             Route::GetPost => {
                 let post = ctx.posts.get(params.get("id").unwrap().parse().unwrap());
 
-                let json = serde_json::to_string(&post).unwrap();
-                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
+                let json = serde_json::to_vec(&post).unwrap();
+                res.send(&*json).ok();
             },
             Route::GetPostByFragment => {
                 let post = ctx.posts.get_by_fragment(params.get("fragment").unwrap());
 
-                let json = serde_json::to_string(&post).unwrap();
-                res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
+                let json = serde_json::to_vec(&post).unwrap();
+                res.send(&*json).ok();
             }
             _ => {
                 res.send(b"Hello World").ok();
