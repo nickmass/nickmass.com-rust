@@ -47,7 +47,7 @@ impl Route {
 impl HttpHandler for Route {
     type Context = BlogContext;
 
-    fn exec(&self, ctx: BlogContext, req: Request, res: Response, params: RouteParams) {
+    fn exec(&self, ctx: BlogContext, mut req: Request, res: Response, params: RouteParams) {
         info!("Matched Route {:?}", self);
 
         match *self {
@@ -72,9 +72,19 @@ impl HttpHandler for Route {
                 let post = ctx.posts.get_by_fragment(params.get("fragment").unwrap());
 
                 res.json(&post);
-            }
-            _ => {
-                res.text("Hello World");
+            },
+            Route::DeletePost => {
+                ctx.posts.delete(params.get("id").unwrap().parse().unwrap());
+            },
+            Route::UpdatePost => {
+                let post = req.as_json().unwrap();
+
+                ctx.posts.update(post);
+            },
+            Route::CreatePost => {
+                let post = req.as_json().unwrap();
+
+                let post = ctx.posts.create(post);
             },
         }
     }

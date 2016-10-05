@@ -13,6 +13,7 @@ use self::hyper::method::Method;
 use self::regex::Regex;
 
 use self::serde::Serialize;
+use self::serde::Deserialize;
 
 use error;
 
@@ -98,6 +99,10 @@ impl<'a, 'b: 'a> Request<'a, 'b> {
                       .find(|x| x.0 == key)
                       .map(|x| x.1.into_owned())
             )
+    }
+
+    pub fn as_json<T>(&mut self) -> Result<T, serde_json::error::Error> where T: Deserialize {
+        serde_json::from_reader(&mut self.0)
     }
 }
 
