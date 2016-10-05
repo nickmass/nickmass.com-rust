@@ -17,6 +17,7 @@ use r2d2;
 use r2d2_redis::RedisConnectionManager;
 
 pub struct BlogContext {
+    posts: PostService,
     redis: r2d2::Pool<RedisConnectionManager>,
 }
 
@@ -37,6 +38,7 @@ impl ContextFactory for BlogContextFactory {
 
     fn get(&self) -> BlogContext {
         BlogContext {
+            posts: PostService::new(self.redis.clone()),
             redis: self.redis.clone()
         }
     }
@@ -69,9 +71,8 @@ impl Route {
 impl HttpHandler for Route {
     type Context = BlogContext;
 
-    fn exec(&self, ctx: Self::Context, req: Request, res: Response, params: RouteParams) {
+    fn exec(&self, ctx: BlogContext, req: Request, res: Response, params: RouteParams) {
         info!("Matched Route {:?}", self);
-        let posts = PostService::new(ctx.redis.get().unwrap());
 
         let url = match req.uri {
             RequestUri::AbsolutePath(s) => Some(s),
@@ -93,19 +94,19 @@ impl HttpHandler for Route {
                     .and_then(|x| x.1.parse().ok())
                     .unwrap_or(0);
 
-                let posts = posts.list(limit, skip);
+                let posts = ctx.posts.list(limit, skip);
 
                 let json = serde_json::to_string(&posts).unwrap();
                 res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
             },
             Route::GetPost => {
-                let post = posts.get(params.get("id").unwrap().parse().unwrap());
+                let post = ctx.posts.get(params.get("id").unwrap().parse().unwrap());
 
                 let json = serde_json::to_string(&post).unwrap();
                 res.send(&*json.bytes().collect::<Vec<u8>>()).ok();
             },
             Route::GetPostByFragment => {
-                let post = posts.get_by_fragment(params.get("fragment").unwrap());
+                let post = ctx.posts.get_by_fragment(params.get("fragment").unwrap());
 
                 let json = serde_json::to_string(&post).unwrap();
                 res.send(&*json.bytes().collect::<Vec<u8>>()).ok();

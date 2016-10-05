@@ -39,40 +39,47 @@ impl redis::FromRedisValue for Post {
 }
 
 pub struct PostService {
-    db: r2d2::PooledConnection<RedisConnectionManager>
+    db: r2d2::Pool<RedisConnectionManager>
 }
 
 impl PostService {
-    pub fn new(redis: r2d2::PooledConnection<RedisConnectionManager>) -> PostService {
+    pub fn new(redis: r2d2::Pool<RedisConnectionManager>) -> PostService {
         PostService{
             db: redis
         }
     }
 
     pub fn list(&self, limit: u32, skip: u32) -> Vec<Post> {
+        let db = self.db.get().unwrap();
         Vec::new()
     }
 
     pub fn get(&self, id: u32) -> Post {
-        self.db.hgetall(&format!("posts:{}", id)).unwrap()
+        let db = self.db.get().unwrap();
+        db.hgetall(&format!("posts:{}", id)).unwrap()
     }
 
     pub fn get_by_fragment(&self, frag: &str) -> Post {
+        let db = self.db.get().unwrap();
         let post_id: u32 = 
-            self.db.get(&format!("postFragment:{}", frag)).unwrap();
+            db.get(&format!("postFragment:{}", frag)).unwrap();
         self.get(post_id)
     }
 
     pub fn create(&self, post: Post) -> Post {
+        let db = self.db.get().unwrap();
         post
     }
 
     pub fn update(&self, post: Post) -> Post {
         if post.id.is_none() { return post; }
-        let exists: bool = self.db.get(&format!("posts:{}", post.id.unwrap())).unwrap();
+
+        let db = self.db.get().unwrap();
+        let exists: bool = db.get(&format!("posts:{}", post.id.unwrap())).unwrap();
         post
     }
 
     pub fn delete(&self, id: u32) { 
+        let db = self.db.get().unwrap();
     }
 }
