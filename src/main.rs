@@ -25,6 +25,7 @@ mod blog;
 
 use blog::{BlogContext, Route};
 use web_server::WebServer;
+use web_server::LogMiddleware;
 use ws_server::WsServer;
 
 fn main() {
@@ -38,9 +39,12 @@ fn main() {
     let web_pool = r2d2::Pool::new(pool_config, manager).unwrap();
     let ws_pool = web_pool.clone();
 
-    let web = WebServer::new(&*var("WEB_SOCKET").unwrap(), Route::router(), move ||{
+    let mut web = WebServer::new(&*var("WEB_SOCKET").unwrap(), move || {
         BlogContext::new(web_pool.clone())
     });
+    web.middleware(LogMiddleware::new());
+    web.middleware(Route::router());
+
     let ws = WsServer::new(&*var("WS_SOCKET").unwrap());
 
     let web_t = thread::spawn(move || web.run());

@@ -47,7 +47,7 @@ impl Route {
 impl RouteHandler for Route {
     type Context = BlogContext;
 
-    fn route<'a, 'b: 'a, 'c>(&self, ctx: BlogContext, req: Request<'a, 'b>, res: Response<'c>, params: RouteParams)
+    fn route<'a, 'b: 'a, 'c>(&self, ctx: &mut BlogContext, req: Request<'a, 'b>, res: Response<'c>, params: RouteParams)
              -> (Request<'a, 'b>, Response<'c>) {
         info!("Matched Route {:?}", self);
 

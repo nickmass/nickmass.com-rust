@@ -35,53 +35,55 @@ impl<T, C> ContextFactory for T where T: Fn() -> C {
     }
 }
 
-pub struct WebServer<TFactory, TRoute> {
+pub struct WebServer<TFactory> where TFactory: ContextFactory {
     server: Server<HttpListener>,
     factory: TFactory,
-    router: Router<TRoute>,
+    middleware: Vec<Box<Middleware<Context=TFactory::Context>>>,
 }
 
-impl<TFactory, TRoute> WebServer<TFactory, TRoute> where
-    TFactory: 'static + ContextFactory<Context=TRoute::Context> + Sync + Send,
-    TRoute: 'static + RouteHandler + Sync + Send,
+impl<TFactory> WebServer<TFactory> where
+    TFactory: 'static + ContextFactory + Sync + Send,
 {
-
-    pub fn new<To: ToSocketAddrs + Debug>(addr: To, router: Router<TRoute>, factory: TFactory)
-                                          -> WebServer<TFactory, TRoute> {
-
+    pub fn new<To>(addr: To, factory: TFactory) -> WebServer<TFactory>
+        where To: ToSocketAddrs {
         let server = Server::http(addr).map_err(error::log).unwrap();
 
         WebServer {
             server: server,
             factory: factory,
-            router: router,
+            middleware: Vec::new(),
         }
+    }
+
+    pub fn middleware<T>(&mut self, middleware: T)
+        where T: 'static + Middleware<Context=TFactory::Context> + Send + Sync {
+        self.middleware.push(Box::new(middleware));
     }
 
     pub fn run(self) {
         info!("Starting Web Server");
         let fact = self.factory;
-        let router = self.router;
+        let middleware = self.middleware;
 
-        self.server.handle(move |req: HyperRequest, mut res: HyperResponse<Fresh>| {
-            info!("Incoming request to: {}", req.uri);
-            let (req, res) = (req.to_request(), res.to_response());
+        self.server.handle(move |req: HyperRequest, res: HyperResponse<Fresh>| {
+            let (req, mut res) = (req.to_request(), res.to_response());
             if req.is_none() {
                 res.text("Bad Request");
                 return;
             }
             let mut req = req.unwrap();
+            let mut ctx = fact.get();
 
-            let route = router.route(&req);
+            for ware in middleware.iter() {
+                let r = ware.exec(&mut ctx, req, res);
+                req = r.0;
+                res = r.1;
 
-            match route {
-                Some((r, params)) => {
-                    r.route(fact.get(), req, res, params);
-                },
-                _ => {
-                    res.text("Bad Request");
-                },
-            };
+                match res {
+                    Response::Done => break,
+                    _ => (),
+                }
+            }
         }).ok();;
     }
 }
@@ -198,9 +200,36 @@ impl<'a> Response<'a> {
     }
 }
 
+pub trait Middleware: Send + Sync {
+    type Context;
+    fn exec<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>)
+                             -> (Request<'a, 'b>, Response<'c>);
+}
+
+pub struct LogMiddleware<C> {
+    _phantom: ::std::marker::PhantomData<C>,
+}
+
+impl<C> LogMiddleware<C> {
+    pub fn new() -> LogMiddleware<C> {
+        LogMiddleware {
+            _phantom: ::std::marker::PhantomData,
+        }
+    }
+}
+
+impl<C> Middleware for LogMiddleware<C> where C: Send + Sync {
+    type Context = C;
+    fn exec<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>)
+                            -> (Request<'a, 'b>, Response<'c>) {
+        info!("{} {}",req.method(), req.url());
+        (req, res)
+    }
+}
+
 pub trait RouteHandler {
     type Context;
-    fn route<'a, 'b: 'a, 'c>(&self, ctx: Self::Context, req: Request<'a, 'b>, res: Response<'c>,
+    fn route<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>,
                          params: RouteParams) -> (Request<'a, 'b>, Response<'c>);
 }
 
@@ -249,6 +278,23 @@ impl<T> Router<T> where T: 'static + Send + Sync + RouteHandler {
             .map(|x| x.get_match(&req.method(), req.url().path()).map(|y|(&x.route,y)))
             .find(|x| x.is_some())
             .map(|x| x.unwrap())
+    }
+}
+
+impl<T> Middleware for Router<T> where T: 'static + Send + Sync + RouteHandler {
+    type Context = T::Context;
+    fn exec<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>)
+                            -> (Request<'a, 'b>, Response<'c>) {
+        let route = self.route(&req);
+
+        match route {
+            Some((r, params)) => {
+                r.route(ctx, req, res, params)
+            },
+            _ => {
+                (req, res.text("Bad Request"))
+            },
+        }
     }
 }
 
