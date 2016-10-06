@@ -26,6 +26,7 @@ mod blog;
 use blog::{BlogContext, Route};
 use web_server::WebServer;
 use web_server::LogMiddleware;
+use web_server::SimpleMiddleware;
 use ws_server::WsServer;
 
 fn main() {
@@ -42,6 +43,10 @@ fn main() {
     let mut web = WebServer::new(&*var("WEB_SOCKET").unwrap(), move || {
         BlogContext::new(web_pool.clone())
     });
+    web.middleware(SimpleMiddleware::new(|ref mut _ctx, req, res| {
+        println!("HELLO WORLD");
+        (req, res)
+    }));
     web.middleware(LogMiddleware::new());
     web.middleware(Route::router());
 

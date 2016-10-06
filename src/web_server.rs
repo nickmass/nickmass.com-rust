@@ -18,7 +18,6 @@ use self::serde::Deserialize;
 use error;
 
 use std::net::ToSocketAddrs;
-use std::fmt::Debug;
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -206,21 +205,48 @@ pub trait Middleware: Send + Sync {
                              -> (Request<'a, 'b>, Response<'c>);
 }
 
+pub struct SimpleMiddleware<F,C> {
+    f: F,
+    _ctx: ::std::marker::PhantomData<C>,
+}
+
+impl<F,C> SimpleMiddleware<F,C> where for<'a, 'b: 'a, 'c> F: 'static + Send + Sync +
+    Fn(&mut C, Request<'a, 'b>, Response<'c>) -> (Request<'a, 'b>, Response<'c>),
+C: Send + Sync{
+    pub fn new(f: F) -> SimpleMiddleware<F,C> {
+        SimpleMiddleware {
+            f: f,
+            _ctx: ::std::marker::PhantomData,
+        }
+    }
+}
+
+impl<F,C> Middleware for SimpleMiddleware<F,C> where for<'a, 'b: 'a, 'c> F: 'static + Send + Sync +
+    Fn(&mut C, Request<'a, 'b>, Response<'c>) -> (Request<'a, 'b>, Response<'c>),
+C: Send + Sync{
+    type Context = C;
+    fn exec<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>) 
+                            -> (Request<'a, 'b>, Response<'c>) {
+        (self.f)(ctx, req, res)
+    }
+
+}
+
 pub struct LogMiddleware<C> {
-    _phantom: ::std::marker::PhantomData<C>,
+    _ctx: ::std::marker::PhantomData<C>,
 }
 
 impl<C> LogMiddleware<C> {
     pub fn new() -> LogMiddleware<C> {
         LogMiddleware {
-            _phantom: ::std::marker::PhantomData,
+            _ctx: ::std::marker::PhantomData,
         }
     }
 }
 
 impl<C> Middleware for LogMiddleware<C> where C: Send + Sync {
     type Context = C;
-    fn exec<'a, 'b: 'a, 'c>(&self, ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>)
+    fn exec<'a, 'b: 'a, 'c>(&self, _ctx: &mut Self::Context, req: Request<'a, 'b>, res: Response<'c>)
                             -> (Request<'a, 'b>, Response<'c>) {
         info!("{} {}",req.method(), req.url());
         (req, res)
